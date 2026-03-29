@@ -21,13 +21,27 @@ How it works
 from __future__ import annotations
 
 import json
+import logging
 import os
-from typing import Optional
 
 import anthropic
+from dotenv import load_dotenv
+
+load_dotenv()  # load ANTHROPIC_API_KEY from .env if present
 
 from pawpal_system import CareTask, Pet
 from pet_care_kb import retrieve_guidelines
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("pawpal.ai_advisor")
 
 
 # ---------------------------------------------------------------------------
@@ -195,12 +209,13 @@ def run_ai_advisor(
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
+        log.error("ANTHROPIC_API_KEY is not set")
         return {
             "tasks": [],
             "explanation": "",
             "error": (
                 "ANTHROPIC_API_KEY environment variable is not set. "
-                "Add it to your shell environment or a .env file."
+                "Add it to a .env file (see .env.example) or export it in your shell."
             ),
         }
 
@@ -208,6 +223,14 @@ def run_ai_advisor(
 
     # RAG: score and retrieve relevant guidelines
     guidelines = retrieve_guidelines(pet)
+    log.info(
+        "RAG: retrieved %d guidelines for %s (%s, age %d, conditions: %s)",
+        len(guidelines),
+        pet.name,
+        pet.species,
+        pet.age,
+        pet.medical_conditions or "none",
+    )
     system_prompt = _build_system_prompt(pet, guidelines)
 
     messages: list[dict] = [
@@ -225,74 +248,108 @@ def run_ai_advisor(
     done = False
     max_turns = 15  # safety cap on agentic loop iterations
 
-    for _ in range(max_turns):
-        if done:
-            break
+    try:
+        for turn in range(max_turns):
+            if done:
+                break
 
-        response = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=2048,
-            system=system_prompt,
-            tools=TOOLS,
-            messages=messages,
-        )
+            log.info("Agentic loop turn %d/%d", turn + 1, max_turns)
+            response = client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=2048,
+                system=system_prompt,
+                tools=TOOLS,
+                messages=messages,
+            )
+            log.info("stop_reason=%s", response.stop_reason)
 
-        # Append assistant turn to history
-        messages.append({"role": "assistant", "content": response.content})
+            # Append assistant turn to history
+            messages.append({"role": "assistant", "content": response.content})
 
-        if response.stop_reason == "end_turn":
-            break
-        if response.stop_reason != "tool_use":
-            break
+            if response.stop_reason == "end_turn":
+                break
+            if response.stop_reason != "tool_use":
+                log.warning("Unexpected stop_reason: %s — ending loop", response.stop_reason)
+                break
 
-        # Process tool calls and build result list
-        tool_results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
+            # Process tool calls and build result list
+            tool_results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
 
-            result: dict
-            if block.name == "get_existing_tasks":
-                result = {"existing_tasks": existing_task_names}
+                log.info("Tool call: %s | input: %s", block.name, block.input)
+                result: dict
+                if block.name == "get_existing_tasks":
+                    result = {"existing_tasks": existing_task_names}
 
-            elif block.name == "suggest_task":
-                inp = block.input
-                # Deduplicate: skip if the name is already present
-                if inp["name"] in existing_task_names or any(
-                    t.name == inp["name"] for t in suggested_tasks
-                ):
-                    result = {"status": "skipped", "reason": "task already exists"}
+                elif block.name == "suggest_task":
+                    inp = block.input
+                    # Deduplicate: skip if the name is already present
+                    if inp["name"] in existing_task_names or any(
+                        t.name == inp["name"] for t in suggested_tasks
+                    ):
+                        log.info("Skipping duplicate task: %s", inp["name"])
+                        result = {"status": "skipped", "reason": "task already exists"}
+                    else:
+                        task = CareTask(
+                            task_type=inp["task_type"],
+                            name=inp["name"],
+                            duration_minutes=inp["duration_minutes"],
+                            priority=inp["priority"],
+                            frequency=inp["frequency"],
+                            preferred_time_windows=inp.get("preferred_time_windows", []),
+                            is_time_flexible=inp.get("is_time_flexible", True),
+                            notes=inp.get("notes", ""),
+                            pet_name=pet.name,
+                        )
+                        suggested_tasks.append(task)
+                        log.info("Suggested task: %s (priority %d)", task.name, task.priority)
+                        result = {"status": "added", "task_name": task.name}
+
+                elif block.name == "finalize_plan":
+                    explanation = block.input.get("explanation", "")
+                    log.info("Agent finalised plan with %d task(s)", len(suggested_tasks))
+                    result = {"status": "finalized"}
+                    done = True
+
                 else:
-                    task = CareTask(
-                        task_type=inp["task_type"],
-                        name=inp["name"],
-                        duration_minutes=inp["duration_minutes"],
-                        priority=inp["priority"],
-                        frequency=inp["frequency"],
-                        preferred_time_windows=inp.get("preferred_time_windows", []),
-                        is_time_flexible=inp.get("is_time_flexible", True),
-                        notes=inp.get("notes", ""),
-                        pet_name=pet.name,
-                    )
-                    suggested_tasks.append(task)
-                    result = {"status": "added", "task_name": task.name}
+                    log.warning("Unknown tool called: %s", block.name)
+                    result = {"error": f"Unknown tool: {block.name}"}
 
-            elif block.name == "finalize_plan":
-                explanation = block.input.get("explanation", "")
-                result = {"status": "finalized"}
-                done = True
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(result),
+                })
 
-            else:
-                result = {"error": f"Unknown tool: {block.name}"}
+            if tool_results:
+                messages.append({"role": "user", "content": tool_results})
 
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": json.dumps(result),
-            })
+        if not done:
+            log.warning("Agent did not call finalize_plan before the turn cap was reached")
 
-        if tool_results:
-            messages.append({"role": "user", "content": tool_results})
+    except anthropic.AuthenticationError:
+        log.exception("Invalid API key")
+        return {
+            "tasks": [],
+            "explanation": "",
+            "error": "Invalid ANTHROPIC_API_KEY. Check that the key is correct and active.",
+        }
+    except anthropic.RateLimitError:
+        log.exception("Rate limit hit")
+        return {
+            "tasks": [],
+            "explanation": "",
+            "error": "Anthropic rate limit reached. Wait a moment and try again.",
+        }
+    except anthropic.APIError as exc:
+        log.exception("Anthropic API error: %s", exc)
+        return {
+            "tasks": [],
+            "explanation": "",
+            "error": f"API error: {exc}",
+        }
 
     return {
         "tasks": suggested_tasks,

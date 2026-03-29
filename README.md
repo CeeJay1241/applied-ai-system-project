@@ -1,31 +1,58 @@
 # PawPal+ (Module 2 Project)
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**PawPal+** is a Streamlit app that helps a pet owner plan and optimise daily care tasks for their pet, with an AI advisor powered by Claude.
 
-## Scenario
+---
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+## Setup
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+### 1. Clone and create a virtual environment
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+```bash
+git clone <repo-url>
+cd applied-ai-system-project
 
-## What you will build
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+```
 
-Your final app should:
+### 2. Install dependencies
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+### 3. Add your Anthropic API key
+
+Copy the example env file and fill in your key:
+
+```bash
+cp .env.example .env
+```
+
+Then open `.env` and replace `your_api_key_here` with your key from [console.anthropic.com](https://console.anthropic.com/). The app loads this file automatically on startup — you do not need to export anything in your shell.
+
+### 4. Run the app
+
+```bash
+python3 -m streamlit run app.py
+```
+
+The app will open at `http://localhost:8501`.
+
+### 5. Run the tests
+
+```bash
+python3 -m pytest tests/test_pawpal.py -v
+```
+
+---
 
 ## Features
 
 | Feature | How it works |
 |---|---|
+| **AI Care Advisor** | Claude analyses the pet's profile, retrieves relevant care guidelines from the knowledge base (RAG), and uses an agentic tool-use loop to suggest a personalised task list with explanations. |
 | **Two-pass greedy scheduling** | Tasks are sorted by priority score and placed into the owner's availability slots. Pass 1 respects each task's preferred time window; Pass 2 relaxes that constraint so high-priority tasks are never silently dropped. |
 | **Priority scoring** | `CareTask.get_priority_score()` computes `base_priority × 10`, adds `+20` for fixed-time tasks, and `+15` for medication tasks, ensuring critical care always schedules first. |
 | **Sorting by time** | `Scheduler.sort_by_time()` orders any task list chronologically by `scheduled_start_minute`; falls back to parsing the `HH:MM` time string when that field is `None`. |
@@ -33,37 +60,62 @@ Your final app should:
 | **Daily recurrence** | `mark_complete(on_date)` sets `next_due_date` to `on_date + 1 day`; the scheduler skips any task whose `next_due_date` is in the future, so completed tasks reappear automatically the next day. |
 | **Twice-daily expansion** | Tasks with `frequency="twice_daily"` are split into separate AM and PM instances using `dataclasses.replace()`, each placed into its own time window. |
 | **Weekly recurrence** | Tasks with `frequency="weekly"` are pinned to a specific weekday via `scheduled_weekday` and skipped on all other days. `mark_complete` advances `next_due_date` by 7 days. |
-| **Auto-generated tasks** | `Pet.get_care_requirements()` automatically adds a daily training session for dogs under 2, a weekly weight check for cats over 10, and forces feeding tasks to be time-inflexible for pets with medical conditions. |
+| **Auto-generated tasks** | `Pet.get_care_requirements()` automatically adds a training session for dogs under 2, a weekly weight check for cats over 10, and forces feeding tasks to be time-inflexible for pets with medical conditions. |
 | **Plan filtering** | `DailyPlan.filter_tasks(pet_name=..., completed=...)` filters the schedule by pet, completion status, or both simultaneously. |
-| **Mark done with recurrence** | The UI "Mark done" button calls `CareTask.mark_complete(on_date)`, sets `is_completed`, updates `next_due_date`, and triggers `st.rerun()` to refresh the schedule in place. |
 
 ---
 
-## Smarter Scheduling
+## AI Advisor — how it works
 
-The scheduling engine in `pawpal_system.py` goes beyond a simple task list. Key features added:
+### RAG (Retrieval-Augmented Generation)
 
-**Two-pass greedy algorithm** — Tasks are sorted by priority score and placed into the owner's availability slots. Pass 1 respects each task's preferred time window; Pass 2 relaxes that constraint for any task that didn't fit, so high-priority tasks are never silently dropped.
+`pet_care_kb.py` holds a knowledge base of 15 care guidelines tagged by species, age group, and medical condition. When the advisor runs, `retrieve_guidelines()` scores every entry against the pet's profile:
 
-**Priority scoring** — `CareTask.get_priority_score()` weights base priority (×10), fixed-time tasks (+20), and medication tasks (+15) so critical care always schedules first.
+- **+3** species match
+- **+2** age-group match (puppy / adult / senior)
+- **+4** medical condition keyword match (substring, case-insensitive)
 
-**Recurring task expansion** — `frequency="twice_daily"` tasks are split into AM/PM instances using the two preferred windows. `frequency="weekly"` tasks are skipped on non-matching weekdays via `scheduled_weekday`. Completed tasks set `next_due_date` automatically and reappear on the correct day.
+The top 8 matching entries are embedded directly into Claude's system prompt so its suggestions are grounded in the retrieved knowledge, not general assumptions.
 
-**Conflict detection** — `Scheduler.detect_conflicts()` scans a plan pairwise and returns `ConflictReport` warnings that classify each overlap as same-pet or cross-pet, without raising exceptions.
+### Agentic workflow
 
-**Filtering and sorting** — `DailyPlan.filter_tasks(pet_name=, completed=)` filters the schedule by pet, status, or both. `Scheduler.sort_by_time()` orders any task list chronologically using `scheduled_start_minute`.
+Claude is given three tools and runs in a loop until it finalises the plan:
 
-**Auto-generated tasks** — `Pet.get_care_requirements()` automatically adds a training session for dogs under 2 and a weekly weight check for cats over 10, and forces feeding tasks to be time-inflexible for pets with medical conditions.
+| Tool | Purpose |
+|---|---|
+| `get_existing_tasks` | Inspect what tasks are already on the schedule |
+| `suggest_task` | Add a task to the emerging care plan |
+| `finalize_plan` | End the loop with a natural-language explanation |
 
-## Testing PawPal+
+The loop is capped at 15 turns. All API errors (auth failure, rate limit, unexpected stop reasons) are caught and returned as readable error messages — the app never crashes on an API failure.
 
-### Running the tests
+### Logging
 
-```bash
-python -m pytest tests/test_pawpal.py -v
+`ai_advisor.py` logs to stdout via Python's `logging` module (`pawpal.ai_advisor` logger). Each run records:
+- How many guidelines were retrieved and why
+- Every tool call the agent makes and its outcome
+- Any warnings (duplicate tasks skipped, unexpected stop reasons)
+- Any API errors with full tracebacks
+
+---
+
+## Project structure
+
+```
+app.py              Streamlit UI
+pawpal_system.py    Core scheduling logic (Pet, CareTask, Owner, Scheduler, DailyPlan)
+ai_advisor.py       Claude-powered agentic advisor with RAG
+pet_care_kb.py      Care knowledge base and retrieval function
+main.py             CLI demo script
+tests/
+  test_pawpal.py    22 automated tests
+requirements.txt    Python dependencies
+.env.example        Template for API key configuration
 ```
 
-### What the tests cover
+---
+
+## Tests
 
 The suite contains **22 tests** across five classes:
 
@@ -72,34 +124,7 @@ The suite contains **22 tests** across five classes:
 | `TestCareTask` | 2 | `mark_complete` sets `is_completed`; `mark_incomplete` resets it |
 | `TestPet` | 2 | Tasks are stored on the pet and returned by `get_care_requirements` |
 | `TestOwner` | 2 | Pets are registered; tasks are aggregated across all pets |
-| `TestSorting` | 3 | `sort_by_time` orders tasks chronologically using `scheduled_start_minute`; falls back to parsing the time string when that field is `None`; correctly handles a midnight (00:00) task |
-| `TestRecurrence` | 6 | `mark_complete` sets `next_due_date` to +1 day (daily) or +7 days (weekly); `create_next_occurrence` returns a clean copy with all scheduling state reset, and `None` when the task was never completed; the scheduler excludes a task whose `next_due_date` is in the future and includes one whose `next_due_date` equals the target date |
-| `TestConflictDetection` | 6 | `detect_conflicts` flags overlapping intervals and returns `ConflictReport` objects classifying each clash as same-pet or cross-pet; adjacent tasks (A ends exactly when B starts) are not flagged; `add_task` rejects a new task that would overlap an existing one and leaves its `scheduled_start_minute` cleared; an empty plan produces no reports |
-| `TestScheduler` | 1 | `generate_daily_plan` returns a plan with the task scheduled and nothing in `unscheduled_tasks` when the task fits within the owner's availability |
-
-### Confidence level: ★★★★☆ (4 / 5)
-
-The core scheduling behaviors — priority ordering, conflict prevention during placement, recurring task filtering, and chronological sorting — are all exercised and passing. The main gap is that the two-pass greedy algorithm itself is only tested end-to-end through `test_generate_daily_plan` with a single task; edge cases like a full slot causing Pass 2 fallback, or a `twice_daily` task with fewer than two time windows, are not yet covered by dedicated tests.
-
-
----
-
-## Getting started
-
-### Setup
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### Suggested workflow
-
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
+| `TestSorting` | 3 | `sort_by_time` orders tasks chronologically; handles `None` field; handles midnight |
+| `TestRecurrence` | 6 | `mark_complete` sets correct `next_due_date`; `create_next_occurrence` resets state; scheduler skips/includes by date |
+| `TestConflictDetection` | 6 | Overlaps flagged as same-pet or cross-pet; adjacent tasks not flagged; `add_task` rejects overlaps |
+| `TestScheduler` | 1 | `generate_daily_plan` schedules a fitting task with nothing unscheduled |
