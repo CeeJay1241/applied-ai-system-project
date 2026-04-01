@@ -4,6 +4,71 @@
 
 ---
 
+## System Diagram
+
+```mermaid
+flowchart TD
+    subgraph INPUT["Input Layer"]
+        U([Owner fills in\npet profile + availability])
+        KB[(Care Knowledge Base\npet_care_kb.py\n15 tagged guidelines)]
+    end
+
+    subgraph AI["AI Layer  —  ai_advisor.py"]
+        direction TB
+        RAG["RAG Retriever\nretrieve_guidelines()\nscores KB entries vs pet profile\nreturns top 8 matches"]
+        SYS["System Prompt\nbuilt with pet profile\n+ retrieved guidelines"]
+        AGENT["Gemini Agent\ngemini-2.0-flash\nfunction-calling loop ≤15 turns"]
+        T1["Tool: get_existing_tasks"]
+        T2["Tool: suggest_task ×N"]
+        T3["Tool: finalize_plan"]
+        RAG --> SYS --> AGENT
+        AGENT --> T1 & T2 & T3
+    end
+
+    subgraph HUMAN_AI["Human-in-the-Loop (AI output)"]
+        HR{"Owner reviews\nsuggested tasks\n+ AI explanation"}
+    end
+
+    subgraph CORE["Core Scheduling Layer  —  pawpal_system.py"]
+        SCH["Scheduler\ntwo-pass greedy algorithm\npriority-sorted placement"]
+        CD["Conflict Detector\ndetect_conflicts()\npairwise overlap scan"]
+        PLAN["Daily Plan\nscheduled + unscheduled tasks"]
+        SCH --> CD --> PLAN
+    end
+
+    subgraph OUTPUT["Output Layer  —  Streamlit UI"]
+        UI["Schedule display\ntime-sorted task list\nconflict warnings\nmark-done buttons"]
+    end
+
+    subgraph HUMAN_DONE["Human-in-the-Loop (execution)"]
+        MD{"Owner marks\ntasks complete\nnext_due_date updated"}
+    end
+
+    subgraph TEST["Testing Layer"]
+        PY["pytest — 22 tests\nRecurrence · Conflicts\nSorting · Scheduler\nPet · Owner · CareTask"]
+    end
+
+    U -->|"pet profile + slots"| RAG
+    U -->|"manual tasks (optional)"| SCH
+    T2 -->|"CareTask objects\n+ explanation"| HR
+    HR -->|"accepted tasks"| SCH
+    PLAN --> UI
+    UI --> MD
+    MD -->|"is_completed=True"| SCH
+
+    PY -. validates .-> CORE
+
+    style AI fill:#e8f4f8,stroke:#4a90d9
+    style INPUT fill:#f0f9f0,stroke:#5cb85c
+    style HUMAN_AI fill:#fff8e1,stroke:#f0ad4e
+    style HUMAN_DONE fill:#fff8e1,stroke:#f0ad4e
+    style CORE fill:#fdf2f8,stroke:#9b59b6
+    style OUTPUT fill:#f0f9f0,stroke:#5cb85c
+    style TEST fill:#fef9f0,stroke:#e67e22
+```
+
+---
+
 ## Setup
 
 ### 1. Clone and create a virtual environment
@@ -22,7 +87,7 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 python3 -m pip install -r requirements.txt
 ```
 
-### 3. Add your Anthropic API key
+### 3. Add your Gemini API key
 
 Copy the example env file and fill in your key:
 
@@ -30,7 +95,7 @@ Copy the example env file and fill in your key:
 cp .env.example .env
 ```
 
-Then open `.env` and replace `your_api_key_here` with your key from [console.anthropic.com](https://console.anthropic.com/). The app loads this file automatically on startup — you do not need to export anything in your shell.
+Then open `.env` and replace `your_api_key_here` with your key from [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey). The app loads this file automatically on startup — you do not need to export anything in your shell.
 
 ### 4. Run the app
 

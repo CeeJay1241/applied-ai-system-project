@@ -241,16 +241,26 @@ class DailyPlan:
                 return True
         return False
 
-    def generate_explanation(self) -> str:
-        """Creates a natural language explanation for scheduling decisions."""
+    def generate_explanation(self, unscheduled_reasons: Optional[dict[str, str]] = None) -> str:
+        """Creates a natural language explanation for scheduling decisions.
+
+        unscheduled_reasons: optional mapping of task name → reason string,
+        produced by the Scheduler which has access to availability context.
+        """
         n_scheduled = len(self.scheduled_tasks)
         n_unscheduled = len(self.unscheduled_tasks)
         parts = [
             f"Scheduled {n_scheduled} task(s) totalling {self.total_duration_minutes} min."
         ]
         if n_unscheduled:
-            names = ", ".join(t.name for t in self.unscheduled_tasks)
-            parts.append(f"{n_unscheduled} task(s) could not be fit: {names}.")
+            if unscheduled_reasons:
+                task_lines = "; ".join(
+                    f"{t.name} ({unscheduled_reasons.get(t.name, 'no available slot')})"
+                    for t in self.unscheduled_tasks
+                )
+            else:
+                task_lines = ", ".join(t.name for t in self.unscheduled_tasks)
+            parts.append(f"{n_unscheduled} task(s) could not be fit: {task_lines}.")
         self.reasoning = " ".join(parts)
         return self.reasoning
 
@@ -467,12 +477,37 @@ class Scheduler:
             if not _try_place(task, relax_window=True):
                 unscheduled.append(task)
 
+        # Diagnose why each unscheduled task couldn't be placed
+        total_available = sum(e - s for s, e in slots)
+        unscheduled_reasons: dict[str, str] = {}
+        for task in unscheduled:
+            if task.duration_minutes > total_available:
+                reason = f"task is {task.duration_minutes} min but only {total_available} min available total"
+            elif task.preferred_time_windows:
+                # Check whether any preferred window overlaps any availability slot
+                task_windows = [_parse_time_window(w) for w in task.preferred_time_windows]
+                has_overlap = any(
+                    min(slot_end, tw_end) - max(slot_start, tw_start) >= task.duration_minutes
+                    for slot_start, slot_end in slots
+                    for tw_start, tw_end in task_windows
+                )
+                if has_overlap:
+                    reason = "preferred window exists but slot already full"
+                else:
+                    reason = (
+                        f"preferred window ({', '.join(task.preferred_time_windows)}) "
+                        "does not overlap available slots"
+                    )
+            else:
+                reason = "not enough contiguous time left in available slots"
+            unscheduled_reasons[task.name] = reason
+
         # Finalise plan
         committed = Scheduler.sort_by_time(committed)
         plan.scheduled_tasks = committed
         plan.unscheduled_tasks = unscheduled
         plan.total_duration_minutes = sum(t.duration_minutes for _, t in committed)
-        plan.generate_explanation()
+        plan.generate_explanation(unscheduled_reasons)
 
         return plan
 

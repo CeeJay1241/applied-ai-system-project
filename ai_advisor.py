@@ -1,6 +1,6 @@
 """
 PawPal+ AI Care Advisor
-Agentic workflow powered by Claude with tool use.
+Agentic workflow powered by Gemini with function calling.
 
 How it works
 ------------
@@ -14,8 +14,8 @@ How it works
      • finalize_plan        — end the loop with a natural-language summary
 
    The loop runs until the agent calls finalize_plan or hits the turn cap.
-   Tool results are fed back as user messages so the model can observe the
-   outcome of each action and adjust (standard agentic pattern).
+   Function responses are fed back so the model can observe each outcome
+   and adjust (standard agentic pattern).
 """
 
 from __future__ import annotations
@@ -24,10 +24,11 @@ import json
 import logging
 import os
 
-import anthropic
+from google import genai
+from google.genai import types, errors as genai_errors
 from dotenv import load_dotenv
 
-load_dotenv()  # load ANTHROPIC_API_KEY from .env if present
+load_dotenv()  # load GOOGLE_API_KEY from .env if present
 
 from pawpal_system import CareTask, Pet
 from pet_care_kb import retrieve_guidelines
@@ -78,17 +79,16 @@ Using the pet profile and the care guidelines above, build an appropriate set \
 of daily care tasks.
 
 Workflow:
-1. Call `get_existing_tasks` first to see what tasks are already scheduled.
-2. Call `suggest_task` for each new task that is genuinely relevant and not \
+1. Call get_existing_tasks first to see what tasks are already scheduled.
+2. Call suggest_task for each new task that is genuinely relevant and not \
    already covered.
-3. Call `finalize_plan` once with a concise explanation of your recommendations \
+3. Call finalize_plan once with a concise explanation of your recommendations \
    and the reasoning behind each one.
 
 Rules:
 - Only suggest tasks relevant to this specific pet's profile and conditions.
 - Do NOT suggest tasks whose names are already in the existing task list.
-- Prioritise medical/medication tasks (priority 4–5) and time-critical tasks \
-  (is_time_flexible=False).
+- Prioritise medical/medication tasks (priority 4-5) and time-critical tasks.
 - Be specific: use durations and time windows consistent with the guidelines.
 - Suggest no more than 7 tasks total.
 - If the existing tasks already cover the pet's needs well, suggest nothing \
@@ -100,86 +100,89 @@ Rules:
 # Tool definitions
 # ---------------------------------------------------------------------------
 
-TOOLS: list[dict] = [
-    {
-        "name": "get_existing_tasks",
-        "description": "Returns the names of care tasks already added for this pet.",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "suggest_task",
-        "description": "Suggests a new care task to add to the pet's schedule.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_type": {
-                    "type": "string",
-                    "enum": ["walk", "feed", "medication", "grooming",
-                             "enrichment", "training", "health_check"],
-                    "description": "Category of care task.",
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Short descriptive task name.",
-                },
-                "duration_minutes": {
-                    "type": "integer",
-                    "description": "How long the task takes in minutes.",
-                },
-                "priority": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 5,
-                    "description": "1=low importance, 5=critical.",
-                },
-                "frequency": {
-                    "type": "string",
-                    "enum": ["daily", "twice_daily", "weekly"],
-                    "description": "How often the task recurs.",
-                },
-                "preferred_time_windows": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Optional HH:MM-HH:MM windows. Provide 2 for twice_daily tasks "
-                        "(AM window first, then PM window)."
-                    ),
-                },
-                "is_time_flexible": {
-                    "type": "boolean",
-                    "description": (
-                        "Set False for tasks that must happen at the specified time "
-                        "(e.g. medication, insulin). Defaults to True."
-                    ),
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Optional care instruction or context for the owner.",
-                },
-            },
-            "required": ["task_type", "name", "duration_minutes", "priority", "frequency"],
-        },
-    },
-    {
-        "name": "finalize_plan",
-        "description": (
-            "Call this when you have finished suggesting tasks. "
-            "Provide a summary of what was recommended and why."
+TOOLS = [
+    types.Tool(function_declarations=[
+        types.FunctionDeclaration(
+            name="get_existing_tasks",
+            description="Returns the names of care tasks already added for this pet.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={},
+            ),
         ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "explanation": {
-                    "type": "string",
-                    "description": (
-                        "Natural language explanation of the suggested tasks and the "
-                        "reasoning behind each recommendation."
+        types.FunctionDeclaration(
+            name="suggest_task",
+            description="Suggests a new care task to add to the pet's schedule.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "task_type": types.Schema(
+                        type="STRING",
+                        enum=["walk", "feed", "medication", "grooming",
+                              "enrichment", "training", "health_check"],
+                        description="Category of care task.",
+                    ),
+                    "name": types.Schema(
+                        type="STRING",
+                        description="Short descriptive task name.",
+                    ),
+                    "duration_minutes": types.Schema(
+                        type="INTEGER",
+                        description="How long the task takes in minutes.",
+                    ),
+                    "priority": types.Schema(
+                        type="INTEGER",
+                        description="1=low importance, 5=critical.",
+                    ),
+                    "frequency": types.Schema(
+                        type="STRING",
+                        enum=["daily", "twice_daily", "weekly"],
+                        description="How often the task recurs.",
+                    ),
+                    "preferred_time_windows": types.Schema(
+                        type="ARRAY",
+                        items=types.Schema(type="STRING"),
+                        description=(
+                            "Optional HH:MM-HH:MM windows. Provide 2 for "
+                            "twice_daily tasks (AM first, then PM)."
+                        ),
+                    ),
+                    "is_time_flexible": types.Schema(
+                        type="BOOLEAN",
+                        description=(
+                            "Set False for tasks that must happen at the "
+                            "specified time (e.g. medication). Defaults to True."
+                        ),
+                    ),
+                    "notes": types.Schema(
+                        type="STRING",
+                        description="Optional care instruction or context for the owner.",
                     ),
                 },
-            },
-            "required": ["explanation"],
-        },
-    },
+                required=["task_type", "name", "duration_minutes", "priority", "frequency"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="finalize_plan",
+            description=(
+                "Call this when you have finished suggesting tasks. "
+                "Provide a summary of what was recommended and why."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "explanation": types.Schema(
+                        type="STRING",
+                        description=(
+                            "Natural language explanation of the suggested tasks "
+                            "and the reasoning behind each recommendation."
+                        ),
+                    ),
+                },
+                required=["explanation"],
+            ),
+        ),
+    ])
 ]
 
 
@@ -207,19 +210,19 @@ def run_ai_advisor(
         explanation – agent's natural-language reasoning string
         error       – str if something went wrong, else None
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
     if not api_key:
-        log.error("ANTHROPIC_API_KEY is not set")
+        log.error("GOOGLE_API_KEY is not set")
         return {
             "tasks": [],
             "explanation": "",
             "error": (
-                "ANTHROPIC_API_KEY environment variable is not set. "
+                "GOOGLE_API_KEY environment variable is not set. "
                 "Add it to a .env file (see .env.example) or export it in your shell."
             ),
         }
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     # RAG: score and retrieve relevant guidelines
     guidelines = retrieve_guidelines(pet)
@@ -231,17 +234,15 @@ def run_ai_advisor(
         pet.age,
         pet.medical_conditions or "none",
     )
-    system_prompt = _build_system_prompt(pet, guidelines)
 
-    messages: list[dict] = [
-        {
-            "role": "user",
-            "content": (
-                f"Please suggest a personalised care plan for {pet.name}. "
-                "Start by checking the existing tasks, then suggest any that are missing."
-            ),
-        }
-    ]
+    system_prompt = _build_system_prompt(pet, guidelines)
+    chat = client.chats.create(
+        model="gemini-2.0-flash-lite",
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            tools=TOOLS,
+        ),
+    )
 
     suggested_tasks: list[CareTask] = []
     explanation = ""
@@ -249,106 +250,112 @@ def run_ai_advisor(
     max_turns = 15  # safety cap on agentic loop iterations
 
     try:
+        response = chat.send_message(
+            f"Please suggest a personalised care plan for {pet.name}. "
+            "Start by checking the existing tasks, then suggest any that are missing."
+        )
+
         for turn in range(max_turns):
             if done:
                 break
 
             log.info("Agentic loop turn %d/%d", turn + 1, max_turns)
-            response = client.messages.create(
-                model="claude-opus-4-6",
-                max_tokens=2048,
-                system=system_prompt,
-                tools=TOOLS,
-                messages=messages,
-            )
-            log.info("stop_reason=%s", response.stop_reason)
 
-            # Append assistant turn to history
-            messages.append({"role": "assistant", "content": response.content})
+            # Find all function-call parts in the response
+            fc_parts = [
+                p for p in response.candidates[0].content.parts
+                if p.function_call is not None
+            ]
 
-            if response.stop_reason == "end_turn":
-                break
-            if response.stop_reason != "tool_use":
-                log.warning("Unexpected stop_reason: %s — ending loop", response.stop_reason)
+            if not fc_parts:
+                log.info("No function calls in response — agent finished naturally")
                 break
 
-            # Process tool calls and build result list
-            tool_results = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
+            tool_response_parts = []
+            for part in fc_parts:
+                fc = part.function_call
+                tool_name = fc.name
+                tool_args = dict(fc.args)
+                log.info("Tool call: %s | args: %s", tool_name, tool_args)
 
-                log.info("Tool call: %s | input: %s", block.name, block.input)
                 result: dict
-                if block.name == "get_existing_tasks":
+                if tool_name == "get_existing_tasks":
                     result = {"existing_tasks": existing_task_names}
 
-                elif block.name == "suggest_task":
-                    inp = block.input
-                    # Deduplicate: skip if the name is already present
-                    if inp["name"] in existing_task_names or any(
-                        t.name == inp["name"] for t in suggested_tasks
+                elif tool_name == "suggest_task":
+                    if tool_args["name"] in existing_task_names or any(
+                        t.name == tool_args["name"] for t in suggested_tasks
                     ):
-                        log.info("Skipping duplicate task: %s", inp["name"])
+                        log.info("Skipping duplicate task: %s", tool_args["name"])
                         result = {"status": "skipped", "reason": "task already exists"}
                     else:
                         task = CareTask(
-                            task_type=inp["task_type"],
-                            name=inp["name"],
-                            duration_minutes=inp["duration_minutes"],
-                            priority=inp["priority"],
-                            frequency=inp["frequency"],
-                            preferred_time_windows=inp.get("preferred_time_windows", []),
-                            is_time_flexible=inp.get("is_time_flexible", True),
-                            notes=inp.get("notes", ""),
+                            task_type=tool_args["task_type"],
+                            name=tool_args["name"],
+                            duration_minutes=int(tool_args["duration_minutes"]),
+                            priority=int(tool_args["priority"]),
+                            frequency=tool_args["frequency"],
+                            preferred_time_windows=list(
+                                tool_args.get("preferred_time_windows", [])
+                            ),
+                            is_time_flexible=bool(tool_args.get("is_time_flexible", True)),
+                            notes=tool_args.get("notes", ""),
                             pet_name=pet.name,
                         )
                         suggested_tasks.append(task)
                         log.info("Suggested task: %s (priority %d)", task.name, task.priority)
                         result = {"status": "added", "task_name": task.name}
 
-                elif block.name == "finalize_plan":
-                    explanation = block.input.get("explanation", "")
+                elif tool_name == "finalize_plan":
+                    explanation = tool_args.get("explanation", "")
                     log.info("Agent finalised plan with %d task(s)", len(suggested_tasks))
                     result = {"status": "finalized"}
                     done = True
 
                 else:
-                    log.warning("Unknown tool called: %s", block.name)
-                    result = {"error": f"Unknown tool: {block.name}"}
+                    log.warning("Unknown tool called: %s", tool_name)
+                    result = {"error": f"Unknown tool: {tool_name}"}
 
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": json.dumps(result),
-                })
+                tool_response_parts.append(
+                    types.Part.from_function_response(
+                        name=tool_name,
+                        response={"result": json.dumps(result)},
+                    )
+                )
 
-            if tool_results:
-                messages.append({"role": "user", "content": tool_results})
+            if done:
+                break
+
+            response = chat.send_message(tool_response_parts)
 
         if not done:
             log.warning("Agent did not call finalize_plan before the turn cap was reached")
 
-    except anthropic.AuthenticationError:
-        log.exception("Invalid API key")
+    except genai_errors.ClientError as exc:
+        log.exception("Gemini client error (code %s): %s", exc.code, exc)
+        if exc.code == 429:
+            return {
+                "tasks": [],
+                "explanation": "",
+                "error": "Gemini rate limit reached. Wait a moment and try again.",
+            }
+        if exc.code in (401, 403):
+            return {
+                "tasks": [],
+                "explanation": "",
+                "error": "Invalid or unauthorised GOOGLE_API_KEY. Check that the key is correct and active.",
+            }
         return {
             "tasks": [],
             "explanation": "",
-            "error": "Invalid ANTHROPIC_API_KEY. Check that the key is correct and active.",
+            "error": f"API error ({exc.code}): {exc}",
         }
-    except anthropic.RateLimitError:
-        log.exception("Rate limit hit")
+    except genai_errors.ServerError as exc:
+        log.exception("Gemini server error: %s", exc)
         return {
             "tasks": [],
             "explanation": "",
-            "error": "Anthropic rate limit reached. Wait a moment and try again.",
-        }
-    except anthropic.APIError as exc:
-        log.exception("Anthropic API error: %s", exc)
-        return {
-            "tasks": [],
-            "explanation": "",
-            "error": f"API error: {exc}",
+            "error": "Gemini server error. Please try again in a moment.",
         }
 
     return {

@@ -93,13 +93,31 @@ else:
             help="'twice_daily' splits into AM and PM instances"
         )
 
+    time_window_am = ""
+    time_window_pm = ""
+    if frequency == "twice_daily":
+        st.info("twice_daily tasks need two time windows so AM and PM instances land in separate parts of the day.")
+        col1, col2 = st.columns(2)
+        with col1:
+            time_window_am = st.text_input("AM window (e.g. 07:00-09:00)", value="07:00-09:00")
+        with col2:
+            time_window_pm = st.text_input("PM window (e.g. 17:00-19:00)", value="17:00-19:00")
+
     if st.button("Add task"):
+        preferred_windows = []
+        if frequency == "twice_daily":
+            if time_window_am and time_window_pm:
+                preferred_windows = [time_window_am.strip(), time_window_pm.strip()]
+            else:
+                st.warning("Please enter both an AM and PM time window for twice_daily tasks.")
+                st.stop()
         task = CareTask(
             task_type=task_type,
             name=task_title,
             duration_minutes=int(duration),
             priority=priority,
             frequency=frequency,
+            preferred_time_windows=preferred_windows,
         )
         st.session_state.pet.add_care_task(task)
         st.session_state.tasks.append(task)
