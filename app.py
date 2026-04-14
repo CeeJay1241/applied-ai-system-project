@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import date
 from pawpal_system import Pet, CareTask, Owner, DailyPlan, Scheduler
 from ai_advisor import run_ai_advisor
+from pet_care_kb import assess_body_condition
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -65,6 +66,17 @@ if st.button("Save Owner & Pet"):
         auto_task_names.append("weekly Weight Check (senior cat rule)")
     if auto_task_names:
         st.info(f"Profile rules will auto-add for {pet_name}: {', '.join(auto_task_names)}")
+
+    # Body condition assessment
+    bcs = assess_body_condition(species, breed, int(age), float(weight))
+    if bcs["status"] == "obese":
+        st.error(f"⚠️ Body Condition: **{bcs['label']}** — {bcs['detail']}")
+    elif bcs["status"] == "overweight":
+        st.warning(f"⚠️ Body Condition: **{bcs['label']}** — {bcs['detail']}")
+    elif bcs["status"] == "underweight":
+        st.warning(f"⚠️ Body Condition: **{bcs['label']}** — {bcs['detail']}")
+    elif bcs["status"] == "healthy":
+        st.success(f"✓ Body Condition: **{bcs['label']}** — {bcs['detail']}")
 
 # --- Task entry ---
 st.divider()
@@ -147,7 +159,7 @@ if st.session_state.pet is None:
 else:
     pet = st.session_state.pet
     st.write(
-        f"Claude will analyse **{pet.name}'s** profile and retrieve relevant care guidelines "
+        f"Gemini will analyse **{pet.name}'s** profile and retrieve relevant care guidelines "
         "from the knowledge base to suggest a personalised task list."
     )
 
@@ -164,6 +176,22 @@ else:
         if result["error"]:
             st.error(result["error"])
         else:
+            # Show planning step if the agent produced one
+            steps = result.get("planning_steps", {})
+            if steps:
+                with st.expander("Agent Planning Step", expanded=True):
+                    if steps.get("identified_gaps"):
+                        st.markdown("**Identified Gaps**")
+                        for gap in steps["identified_gaps"]:
+                            st.markdown(f"- {gap}")
+                    if steps.get("planned_suggestions"):
+                        st.markdown("**Planned Suggestions**")
+                        for suggestion in steps["planned_suggestions"]:
+                            st.markdown(f"- {suggestion}")
+                    if steps.get("priority_order"):
+                        st.markdown("**Priority Order**")
+                        st.write(steps["priority_order"])
+
             if result["explanation"]:
                 with st.expander("AI Reasoning", expanded=True):
                     st.write(result["explanation"])

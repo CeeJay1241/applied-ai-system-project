@@ -8,14 +8,20 @@ How it works
    profile (species, age, medical conditions) and injects the top matches
    into the system prompt so the model has grounded, specific context.
 
-2. Agentic loop — the agent is given three tools:
+2. Agentic loop — the agent is given four tools:
      • get_existing_tasks   — inspect what's already on the pet's schedule
+     • plan_reasoning       — explicit planning step: agent states what gaps
+                              it sees and what it intends to suggest before acting
      • suggest_task         — add a task to the emerging care plan
      • finalize_plan        — end the loop with a natural-language summary
 
    The loop runs until the agent calls finalize_plan or hits the turn cap.
    Function responses are fed back so the model can observe each outcome
    and adjust (standard agentic pattern).
+
+   The plan_reasoning step makes the agent's decision-making chain observable —
+   the UI surfaces it separately from the final explanation so users can see
+   not just what was suggested but how the agent reasoned about the gaps.
 """
 
 from __future__ import annotations
@@ -147,11 +153,12 @@ Using the pet profile and the care guidelines above, build an appropriate set \
 of daily care tasks.
 
 Workflow:
-1. Call get_existing_tasks first to see what tasks are already scheduled.
-2. Call suggest_task for each new task that is genuinely relevant and not \
-   already covered.
-3. Call finalize_plan once with a concise explanation of your recommendations \
-   and the reasoning behind each one.
+1. Call get_existing_tasks to see what tasks are already scheduled.
+2. Call plan_reasoning to articulate your gap analysis — what care needs are \
+   missing or under-served, what you intend to suggest, and why. This step \
+   is shown to the owner so be clear and specific.
+3. Call suggest_task for each new task identified in your plan.
+4. Call finalize_plan once with a concise summary of your recommendations.
 
 Rules:
 - Only suggest tasks relevant to this specific pet's profile and conditions.
@@ -162,7 +169,7 @@ Rules:
 - Be specific: use durations and time windows consistent with the guidelines.
 - Suggest no more than 7 tasks total.
 - If the existing tasks already cover the pet's needs well, suggest nothing \
-  new and explain that in finalize_plan.
+  new and explain that in both plan_reasoning and finalize_plan.
 """
 
 
@@ -178,6 +185,35 @@ TOOLS = [
             parameters=types.Schema(
                 type="OBJECT",
                 properties={},
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="plan_reasoning",
+            description=(
+                "Call this after get_existing_tasks and before suggest_task. "
+                "Articulate your gap analysis: what care needs are missing, "
+                "what you plan to suggest, and why. This is shown to the owner "
+                "as an observable planning step."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "identified_gaps": types.Schema(
+                        type="ARRAY",
+                        items=types.Schema(type="STRING"),
+                        description="List of care gaps or unmet needs identified from the existing schedule.",
+                    ),
+                    "planned_suggestions": types.Schema(
+                        type="ARRAY",
+                        items=types.Schema(type="STRING"),
+                        description="List of tasks you intend to suggest and the reasoning for each.",
+                    ),
+                    "priority_order": types.Schema(
+                        type="STRING",
+                        description="Brief explanation of which tasks are most urgent and why.",
+                    ),
+                },
+                required=["identified_gaps", "planned_suggestions", "priority_order"],
             ),
         ),
         types.FunctionDeclaration(
@@ -326,6 +362,7 @@ def run_ai_advisor(
 
     suggested_tasks: list[CareTask] = []
     explanation = ""
+    planning_steps: dict = {}  # populated when agent calls plan_reasoning
     done = False
     max_turns = 10  # safety cap on agentic loop iterations
 
@@ -374,6 +411,18 @@ def run_ai_advisor(
                             for t in existing_tasks
                         ],
                     }
+
+                elif tool_name == "plan_reasoning":
+                    planning_steps = {
+                        "identified_gaps": list(tool_args.get("identified_gaps", [])),
+                        "planned_suggestions": list(tool_args.get("planned_suggestions", [])),
+                        "priority_order": tool_args.get("priority_order", ""),
+                    }
+                    log.info(
+                        "Agent planning step — gaps: %s",
+                        planning_steps["identified_gaps"],
+                    )
+                    result = {"status": "acknowledged", "message": "Plan noted. Proceed with suggest_task calls."}
 
                 elif tool_name == "suggest_task":
                     proposed_name = str(tool_args["name"])
@@ -501,5 +550,6 @@ def run_ai_advisor(
     return {
         "tasks": suggested_tasks,
         "explanation": explanation,
+        "planning_steps": planning_steps,
         "error": None,
     }

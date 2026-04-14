@@ -277,6 +277,292 @@ CARE_KNOWLEDGE: list[dict] = [
 
 
 # ---------------------------------------------------------------------------
+# Second data source: Preventive & Behavioural Care
+# ---------------------------------------------------------------------------
+
+PREVENTIVE_CARE_KNOWLEDGE: list[dict] = [
+    {
+        "id": "prev_flea_tick",
+        "title": "Flea & Tick Prevention",
+        "tags": {"species": ["dog", "cat"], "age_groups": ["puppy", "adult", "senior"], "conditions": []},
+        "content": (
+            "Monthly flea and tick prevention is essential year-round, especially in warm climates. "
+            "Untreated infestations lead to skin disease, anaemia, and tick-borne illness (Lyme disease, "
+            "Rocky Mountain spotted fever). Use vet-approved topical treatments or oral tablets — "
+            "never apply dog products to cats (permethrin is toxic to cats)."
+        ),
+        "task_templates": [
+            {"task_type": "medication", "name": "Flea & Tick Treatment", "duration_minutes": 10,
+             "priority": 4, "frequency": "weekly", "scheduled_weekday": 0,
+             "notes": "Apply monthly. Use species-appropriate product only. Record date applied."},
+        ],
+        "source": "preventive_care",
+    },
+    {
+        "id": "prev_heartworm",
+        "title": "Heartworm Prevention — Dogs",
+        "tags": {"species": ["dog"], "age_groups": ["puppy", "adult", "senior"], "conditions": []},
+        "content": (
+            "Heartworm disease is transmitted by mosquitoes and is potentially fatal if untreated. "
+            "Monthly oral preventatives (e.g. ivermectin-based) are highly effective. "
+            "Annual heartworm tests are recommended before restarting prevention after a lapse. "
+            "Prevention is far cheaper than treatment."
+        ),
+        "task_templates": [
+            {"task_type": "medication", "name": "Heartworm Prevention", "duration_minutes": 5,
+             "priority": 4, "frequency": "weekly", "scheduled_weekday": 0,
+             "notes": "Administer monthly. Never skip — even one missed dose can leave the dog vulnerable."},
+        ],
+        "source": "preventive_care",
+    },
+    {
+        "id": "prev_anxiety_dog",
+        "title": "Anxiety & Stress Management — Dogs",
+        "tags": {"species": ["dog"], "age_groups": ["puppy", "adult", "senior"],
+                 "conditions": ["anxiety", "stress", "separation anxiety", "nervous", "fearful",
+                                 "reactive", "aggression"]},
+        "content": (
+            "Anxious dogs benefit from structured daily routines, adequate exercise, and mental enrichment. "
+            "Decompression walks (letting the dog sniff freely) reduce cortisol levels significantly. "
+            "Puzzle feeders and Kong toys extend engagement and reduce anxiety during alone time. "
+            "Severe cases may need behaviour therapy or vet-prescribed anxiolytics — administer "
+            "30–60 minutes before anticipated stressors (thunderstorms, visitors, car journeys)."
+        ),
+        "task_templates": [
+            {"task_type": "enrichment", "name": "Decompression Sniff Walk", "duration_minutes": 20,
+             "priority": 3, "frequency": "daily", "preferred_time_windows": ["07:00-09:00"],
+             "notes": "Let the dog lead and sniff freely — no structured heel. Highly calming."},
+            {"task_type": "enrichment", "name": "Puzzle Feeder Session", "duration_minutes": 15,
+             "priority": 3, "frequency": "daily", "preferred_time_windows": ["12:00-14:00"],
+             "notes": "Kong or snuffle mat with part of daily kibble. Reduces alone-time anxiety."},
+        ],
+        "source": "preventive_care",
+    },
+    {
+        "id": "prev_weight_management",
+        "title": "Weight Management & Obesity Prevention",
+        "tags": {"species": ["dog", "cat"], "age_groups": ["adult", "senior"],
+                 "conditions": ["obesity", "overweight", "weight", "diet"]},
+        "content": (
+            "Over 50% of pets in the US are overweight. Obesity shortens lifespan by up to 2 years "
+            "and worsens joint disease, diabetes, and heart conditions. "
+            "Measure meals precisely using a kitchen scale, not a cup. "
+            "Treats should make up no more than 10% of daily caloric intake. "
+            "Weekly weight checks allow early intervention before weight becomes hard to reverse."
+        ),
+        "task_templates": [
+            {"task_type": "health_check", "name": "Weekly Weight Check", "duration_minutes": 5,
+             "priority": 4, "frequency": "weekly",
+             "notes": "Record weight on a chart. Target 0.5–1% body weight loss per week if on a diet."},
+            {"task_type": "feed", "name": "Measured Meal — Morning", "duration_minutes": 10,
+             "priority": 5, "frequency": "daily", "preferred_time_windows": ["07:00-08:00"],
+             "is_time_flexible": False,
+             "notes": "Use kitchen scale, not a cup. Consult vet for target calorie intake."},
+        ],
+        "source": "preventive_care",
+    },
+    {
+        "id": "prev_vaccination",
+        "title": "Vaccination & Vet Visit Reminders",
+        "tags": {"species": ["dog", "cat"], "age_groups": ["puppy", "kitten", "adult", "senior"],
+                 "conditions": []},
+        "content": (
+            "Core vaccines (rabies, distemper, parvovirus for dogs; FVRCP, rabies for cats) must be "
+            "kept up to date. Puppies and kittens need boosters every 3–4 weeks until 16 weeks old. "
+            "Adults need annual or triennial boosters depending on vaccine type. "
+            "Senior pets benefit from twice-yearly vet check-ups to catch age-related issues early."
+        ),
+        "task_templates": [
+            {"task_type": "health_check", "name": "Vet Check-up Reminder", "duration_minutes": 60,
+             "priority": 3, "frequency": "weekly", "scheduled_weekday": 5,
+             "notes": "Schedule biannual vet visits. Keep vaccination records updated."},
+        ],
+        "source": "preventive_care",
+    },
+    {
+        "id": "prev_dental_prevention",
+        "title": "Dental Disease Prevention",
+        "tags": {"species": ["dog", "cat"], "age_groups": ["adult", "senior"], "conditions": []},
+        "content": (
+            "80% of dogs and 70% of cats show signs of dental disease by age 3. "
+            "Daily brushing is the gold standard — even 3x/week makes a significant difference. "
+            "Dental chews (VOHC-approved) provide secondary plaque control. "
+            "Annual professional cleanings under anaesthesia are recommended for adult pets."
+        ),
+        "task_templates": [
+            {"task_type": "grooming", "name": "Dental Chew", "duration_minutes": 10,
+             "priority": 3, "frequency": "daily", "preferred_time_windows": ["18:00-20:00"],
+             "notes": "VOHC-approved dental chew. Supplement to — not replacement for — brushing."},
+        ],
+        "source": "preventive_care",
+    },
+    {
+        "id": "prev_socialisation",
+        "title": "Socialisation & Mental Enrichment — Puppies",
+        "tags": {"species": ["dog"], "age_groups": ["puppy"], "conditions": []},
+        "content": (
+            "The critical socialisation window closes at 12–14 weeks. Positive exposure to people, "
+            "dogs, sounds, surfaces, and environments during this window prevents fear-based behaviour "
+            "in adulthood. Training sessions also count as mental enrichment — 5–10 minutes twice daily "
+            "is enough to build impulse control and a vocabulary of basic cues."
+        ),
+        "task_templates": [
+            {"task_type": "training", "name": "Training & Socialisation", "duration_minutes": 10,
+             "priority": 4, "frequency": "daily", "preferred_time_windows": ["09:00-10:00"],
+             "notes": "Keep sessions short and positive. Focus on sit, stay, come, leave it."},
+        ],
+        "source": "preventive_care",
+    },
+    {
+        "id": "prev_hyperthyroid_cat",
+        "title": "Hyperthyroidism Management — Cats",
+        "tags": {"species": ["cat"], "age_groups": ["senior"],
+                 "conditions": ["hyperthyroidism", "thyroid", "hyperthyroid"]},
+        "content": (
+            "Feline hyperthyroidism is one of the most common senior cat conditions. "
+            "Methimazole is typically given twice daily at 12-hour intervals. "
+            "Monitor for side effects: vomiting, lethargy, facial scratching. "
+            "Regular thyroid level checks (every 3–6 months once stabilised) are required. "
+            "An iodine-restricted prescription diet is an alternative to daily medication."
+        ),
+        "task_templates": [
+            {"task_type": "medication", "name": "Thyroid Medication", "duration_minutes": 5,
+             "priority": 5, "frequency": "twice_daily",
+             "preferred_time_windows": ["07:30-08:00", "19:30-20:00"],
+             "is_time_flexible": False,
+             "notes": "Give methimazole with a small amount of food to reduce nausea. 12-hour spacing."},
+        ],
+        "source": "preventive_care",
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Body Condition Classifier
+# ---------------------------------------------------------------------------
+
+# Breed → size category mapping (keyword-based, case-insensitive)
+_BREED_SIZE_MAP: list[tuple[list[str], str]] = [
+    (["chihuahua", "pomeranian", "maltese", "yorkie", "yorkshire", "shih tzu", "papillon",
+      "miniature pinscher", "min pin", "toy poodle", "miniature dachshund", "miniature schnauzer",
+      "italian greyhound", "pekingese", "japanese chin"], "small"),
+    (["beagle", "cocker spaniel", "border collie", "australian shepherd", "aussie", "whippet",
+      "english springer", "brittany", "basenji", "bulldog", "french bulldog", "frenchie",
+      "shar pei", "standard schnauzer", "staffordshire", "staffy", "pit bull", "pitbull",
+      "american pit", "siberian husky", "husky", "shiba inu"], "medium"),
+    (["labrador", "golden retriever", "german shepherd", "alsatian", "rottweiler", "boxer",
+      "weimaraner", "doberman", "dobermann", "standard poodle", "dalmatian", "vizsla",
+      "belgian malinois", "malinois", "flat coated retriever", "irish setter", "pointer"], "large"),
+    (["great dane", "saint bernard", "mastiff", "newfoundland", "bernese mountain",
+      "irish wolfhound", "leonberger", "great pyrenees", "anatolian", "kangal"], "giant"),
+]
+
+# Ideal weight ranges: (min_kg, max_kg) keyed by (species, life_stage, size)
+_IDEAL_WEIGHT: dict[tuple, tuple[float, float]] = {
+    # Dogs — puppies
+    ("dog", "puppy", "small"):  (0.5, 4.0),
+    ("dog", "puppy", "medium"): (5.0, 15.0),
+    ("dog", "puppy", "large"):  (10.0, 25.0),
+    ("dog", "puppy", "giant"):  (15.0, 40.0),
+    # Dogs — adults
+    ("dog", "adult", "small"):  (2.0, 6.0),
+    ("dog", "adult", "medium"): (10.0, 25.0),
+    ("dog", "adult", "large"):  (25.0, 40.0),
+    ("dog", "adult", "giant"):  (45.0, 90.0),
+    # Dogs — seniors (slightly lower ceiling — muscle loss expected)
+    ("dog", "senior", "small"):  (2.0, 5.5),
+    ("dog", "senior", "medium"): (9.0, 23.0),
+    ("dog", "senior", "large"):  (23.0, 38.0),
+    ("dog", "senior", "giant"):  (40.0, 80.0),
+    # Cats
+    ("cat", "kitten", "standard"): (0.5, 3.5),
+    ("cat", "adult",  "standard"): (3.5, 5.5),
+    ("cat", "senior", "standard"): (3.0, 5.0),  # floor drops — weight loss common in seniors
+}
+
+
+def _get_breed_size(breed: str) -> str:
+    """Map a breed string to a size category. Defaults to 'medium' if unrecognised."""
+    breed_lower = breed.lower()
+    for keywords, size in _BREED_SIZE_MAP:
+        if any(kw in breed_lower for kw in keywords):
+            return size
+    return "medium"
+
+
+def assess_body_condition(species: str, breed: str, age: float, weight_kg: float) -> dict:
+    """Assess a pet's body condition based on species, breed, age, and weight.
+
+    Returns a dict with:
+        status      — "healthy", "overweight", "obese", "underweight", or "unknown"
+        label       — short human-readable label
+        detail      — explanation string shown in the UI
+        conditions  — list of condition strings to auto-inject into RAG (may be empty)
+    """
+    life_stage = _age_group(species, int(age))
+
+    if species == "dog":
+        size = _get_breed_size(breed)
+        key = ("dog", life_stage, size)
+    elif species == "cat":
+        key = ("cat", life_stage, "standard")
+    else:
+        return {"status": "unknown", "label": "Not assessed",
+                "detail": "Weight assessment is not available for this species.",
+                "conditions": []}
+
+    if key not in _IDEAL_WEIGHT:
+        return {"status": "unknown", "label": "Not assessed",
+                "detail": "Could not determine ideal weight range for this profile.",
+                "conditions": []}
+
+    ideal_min, ideal_max = _IDEAL_WEIGHT[key]
+
+    if weight_kg > ideal_max * 1.20:
+        return {
+            "status": "obese",
+            "label": "Obese",
+            "detail": (
+                f"At {weight_kg:.1f} kg, {breed or species} is significantly above the healthy range "
+                f"of {ideal_min}–{ideal_max} kg for a {life_stage} of this size. "
+                "Obesity increases risk of diabetes, joint disease, and heart conditions."
+            ),
+            "conditions": ["obesity", "overweight"],
+        }
+    if weight_kg > ideal_max * 1.10:
+        return {
+            "status": "overweight",
+            "label": "Overweight",
+            "detail": (
+                f"At {weight_kg:.1f} kg, {breed or species} is above the healthy range "
+                f"of {ideal_min}–{ideal_max} kg for a {life_stage} of this size. "
+                "Weight management is recommended."
+            ),
+            "conditions": ["overweight"],
+        }
+    if weight_kg < ideal_min * 0.85:
+        return {
+            "status": "underweight",
+            "label": "Underweight",
+            "detail": (
+                f"At {weight_kg:.1f} kg, {breed or species} is below the healthy range "
+                f"of {ideal_min}–{ideal_max} kg for a {life_stage} of this size. "
+                "Consider a vet visit to rule out underlying illness."
+            ),
+            "conditions": ["underweight"],
+        }
+    return {
+        "status": "healthy",
+        "label": "Healthy weight",
+        "detail": (
+            f"At {weight_kg:.1f} kg, {breed or species} is within the healthy range "
+            f"of {ideal_min}–{ideal_max} kg for a {life_stage} of this size."
+        ),
+        "conditions": [],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Retrieval
 # ---------------------------------------------------------------------------
 
@@ -289,38 +575,69 @@ def _age_group(species: str, age: int) -> str:
     return "adult"
 
 
+def _score_entry(entry: dict, species: str, age_group: str, conditions_lower: list[str]) -> int:
+    """Score a single knowledge base entry against a pet's profile.
+
+    +3  species tag matches (or entry has no species restriction)
+    +2  age_group tag matches (or entry has no age restriction)
+    +4  any condition keyword found in pet.medical_conditions (substring, case-insensitive)
+    """
+    tags = entry["tags"]
+    score = 0
+
+    if not tags["species"] or species in tags["species"]:
+        score += 3
+
+    if not tags["age_groups"] or age_group in tags["age_groups"]:
+        score += 2
+
+    for cond_tag in tags.get("conditions", []):
+        for cond_pet in conditions_lower:
+            if cond_tag.lower() in cond_pet or cond_pet in cond_tag.lower():
+                score += 4
+                break
+
+    return score
+
+
 def retrieve_guidelines(pet) -> list[dict]:
     """Return the most relevant care guidelines for a given Pet.
+
+    Retrieves from two knowledge sources:
+      - CARE_KNOWLEDGE        — core care guidelines (exercise, feeding, grooming, medical)
+      - PREVENTIVE_CARE_KNOWLEDGE — preventive & behavioural guidelines (parasites, anxiety,
+                                    weight, dental prevention, socialisation, vaccines)
+
+    Before scoring, body condition assessment runs automatically on the pet's species,
+    breed, age, and weight. If the pet is overweight, obese, or underweight, the relevant
+    condition labels are injected into the scoring so appropriate guidelines surface without
+    the owner having to self-diagnose.
 
     Scoring per entry:
       +3  species tag matches (or entry has no species restriction)
       +2  age_group tag matches (or entry has no age restriction)
-      +4  any condition keyword found in pet.medical_conditions (substring, case-insensitive)
+      +4  any condition keyword found in pet.medical_conditions or BCS result (substring, case-insensitive)
     Returns up to 8 entries with score > 0, sorted by score descending.
     """
     age_group = _age_group(pet.species, pet.age)
+
+    # Start with owner-declared conditions
     conditions_lower = [c.lower() for c in getattr(pet, "medical_conditions", [])]
 
+    # Auto-inject BCS conditions based on species + breed + age + weight
+    weight = getattr(pet, "weight", None) or getattr(pet, "weight_kg", None)
+    breed = getattr(pet, "breed", "") or ""
+    if weight:
+        bcs = assess_body_condition(pet.species, breed, pet.age, weight)
+        for auto_cond in bcs["conditions"]:
+            if auto_cond not in conditions_lower:
+                conditions_lower.append(auto_cond)
+
+    all_entries = CARE_KNOWLEDGE + PREVENTIVE_CARE_KNOWLEDGE
+
     scored: list[tuple[int, dict]] = []
-    for entry in CARE_KNOWLEDGE:
-        tags = entry["tags"]
-        score = 0
-
-        # Species match
-        if not tags["species"] or pet.species in tags["species"]:
-            score += 3
-
-        # Age-group match
-        if not tags["age_groups"] or age_group in tags["age_groups"]:
-            score += 2
-
-        # Medical condition match (substring both ways)
-        for cond_tag in tags.get("conditions", []):
-            for cond_pet in conditions_lower:
-                if cond_tag.lower() in cond_pet or cond_pet in cond_tag.lower():
-                    score += 4
-                    break
-
+    for entry in all_entries:
+        score = _score_entry(entry, pet.species, age_group, conditions_lower)
         if score > 0:
             scored.append((score, entry))
 
