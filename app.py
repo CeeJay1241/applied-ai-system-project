@@ -153,9 +153,9 @@ else:
 
     if st.button("Generate AI Care Plan", type="primary"):
         st.session_state.ai_result = None
-        existing_names = [t.name for t in st.session_state.tasks]
+        existing_tasks = list(st.session_state.tasks)
         with st.spinner(f"Analysing {pet.name}'s needs and retrieving care guidelines…"):
-            result = run_ai_advisor(pet, existing_names)
+            result = run_ai_advisor(pet, existing_tasks)
         st.session_state.ai_result = result
 
     if st.session_state.ai_result is not None:

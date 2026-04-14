@@ -23,6 +23,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
+import re
+import time
 
 from google import genai
 from google.genai import types, errors as genai_errors
@@ -43,6 +46,71 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("pawpal.ai_advisor")
+
+_TIME_OF_DAY_ALIASES = {
+    "morning": "morning",
+    "am": "morning",
+    "breakfast": "morning",
+    "afternoon": "afternoon",
+    "lunch": "afternoon",
+    "evening": "evening",
+    "pm": "evening",
+    "night": "night",
+    "dinner": "night",
+}
+
+
+def _send_message_with_retry(chat, message, *, max_retries: int = 3):
+    """Send a chat message with bounded retry on transient API throttling/errors."""
+    for attempt in range(max_retries + 1):
+        try:
+            return chat.send_message(message)
+        except genai_errors.ClientError as exc:
+            error_text = str(exc).lower()
+            # Hard quota exhaustion will not succeed with retries.
+            if "exceeded your current quota" in error_text or "check your plan and billing" in error_text:
+                raise
+            if exc.code != 429 or attempt >= max_retries:
+                raise
+            # Exponential backoff with jitter to reduce retry collisions.
+            delay = (2 ** attempt) + random.uniform(0.1, 0.5)
+            log.warning(
+                "Gemini rate-limited (429). Retrying in %.2fs (%d/%d)",
+                delay,
+                attempt + 1,
+                max_retries,
+            )
+            time.sleep(delay)
+        except genai_errors.ServerError:
+            if attempt >= max_retries:
+                raise
+            delay = (2 ** attempt) + random.uniform(0.1, 0.5)
+            log.warning(
+                "Gemini server error. Retrying in %.2fs (%d/%d)",
+                delay,
+                attempt + 1,
+                max_retries,
+            )
+            time.sleep(delay)
+
+
+def _normalize_name(name: str) -> str:
+    return re.sub(r"\s+", " ", name.strip().lower())
+
+
+def _extract_time_of_day(name: str) -> str | None:
+    normalized = _normalize_name(name)
+    for token, canonical in _TIME_OF_DAY_ALIASES.items():
+        if re.search(rf"\b{re.escape(token)}\b", normalized):
+            return canonical
+    return None
+
+
+def _canonical_task_key(task_type: str, name: str) -> str:
+    time_of_day = _extract_time_of_day(name)
+    if time_of_day:
+        return f"{task_type}:{time_of_day}"
+    return f"{task_type}:{_normalize_name(name)}"
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +156,8 @@ Workflow:
 Rules:
 - Only suggest tasks relevant to this specific pet's profile and conditions.
 - Do NOT suggest tasks whose names are already in the existing task list.
+- If a task name is time-of-day specific (e.g., morning/evening), set frequency
+    to daily (single session), not twice_daily.
 - Prioritise medical/medication tasks (priority 4-5) and time-critical tasks.
 - Be specific: use durations and time windows consistent with the guidelines.
 - Suggest no more than 7 tasks total.
@@ -192,7 +262,7 @@ TOOLS = [
 
 def run_ai_advisor(
     pet: Pet,
-    existing_task_names: list[str],
+    existing_tasks: list[CareTask],
 ) -> dict:
     """Run the agentic care advisor for *pet*.
 
@@ -200,8 +270,9 @@ def run_ai_advisor(
     ----------
     pet:
         The Pet object whose profile drives retrieval and suggestions.
-    existing_task_names:
-        Names of tasks already on the pet's schedule (used to avoid duplicates).
+    existing_tasks:
+        CareTask objects already on the pet's schedule (used to avoid duplicates
+        and shape smarter suggestions).
 
     Returns
     -------
@@ -236,21 +307,31 @@ def run_ai_advisor(
     )
 
     system_prompt = _build_system_prompt(pet, guidelines)
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+    existing_task_names = [t.name for t in existing_tasks]
+    existing_name_keys = {_normalize_name(t.name) for t in existing_tasks}
+    existing_canonical_keys = {
+        _canonical_task_key(t.task_type, t.name) for t in existing_tasks
+    }
+
     chat = client.chats.create(
-        model="gemini-2.0-flash-lite",
+        model=model_name,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=TOOLS,
         ),
     )
+    log.info("Using Gemini model: %s", model_name)
 
     suggested_tasks: list[CareTask] = []
     explanation = ""
     done = False
-    max_turns = 15  # safety cap on agentic loop iterations
+    max_turns = 10  # safety cap on agentic loop iterations
 
     try:
-        response = chat.send_message(
+        response = _send_message_with_retry(
+            chat,
             f"Please suggest a personalised care plan for {pet.name}. "
             "Start by checking the existing tasks, then suggest any that are missing."
         )
@@ -280,24 +361,73 @@ def run_ai_advisor(
 
                 result: dict
                 if tool_name == "get_existing_tasks":
-                    result = {"existing_tasks": existing_task_names}
+                    result = {
+                        "existing_tasks": existing_task_names,
+                        "existing_task_details": [
+                            {
+                                "task_type": t.task_type,
+                                "name": t.name,
+                                "duration_minutes": t.duration_minutes,
+                                "frequency": t.frequency,
+                                "preferred_time_windows": t.preferred_time_windows,
+                            }
+                            for t in existing_tasks
+                        ],
+                    }
 
                 elif tool_name == "suggest_task":
-                    if tool_args["name"] in existing_task_names or any(
-                        t.name == tool_args["name"] for t in suggested_tasks
+                    proposed_name = str(tool_args["name"])
+                    proposed_type = str(tool_args["task_type"])
+                    proposed_frequency = str(tool_args["frequency"])
+                    proposed_time_of_day = _extract_time_of_day(proposed_name)
+
+                    preferred_windows = list(tool_args.get("preferred_time_windows", []))
+                    if proposed_frequency == "twice_daily" and proposed_time_of_day:
+                        log.info(
+                            "Normalising inconsistent recurrence for '%s': twice_daily -> daily",
+                            proposed_name,
+                        )
+                        proposed_frequency = "daily"
+                        if preferred_windows:
+                            if proposed_time_of_day in {"evening", "night"}:
+                                preferred_windows = [preferred_windows[-1]]
+                            else:
+                                preferred_windows = [preferred_windows[0]]
+
+                    proposed_name_key = _normalize_name(proposed_name)
+                    proposed_canonical_key = _canonical_task_key(proposed_type, proposed_name)
+                    suggested_name_keys = {_normalize_name(t.name) for t in suggested_tasks}
+                    suggested_canonical_keys = {
+                        _canonical_task_key(t.task_type, t.name) for t in suggested_tasks
+                    }
+
+                    if (
+                        proposed_name_key in existing_name_keys
+                        or proposed_name_key in suggested_name_keys
                     ):
-                        log.info("Skipping duplicate task: %s", tool_args["name"])
+                        log.info("Skipping duplicate task name: %s", proposed_name)
                         result = {"status": "skipped", "reason": "task already exists"}
+                    elif (
+                        proposed_canonical_key in existing_canonical_keys
+                        or proposed_canonical_key in suggested_canonical_keys
+                    ):
+                        log.info(
+                            "Skipping duplicate task intent: %s (%s)",
+                            proposed_name,
+                            proposed_canonical_key,
+                        )
+                        result = {
+                            "status": "skipped",
+                            "reason": "task intent already covered by existing schedule",
+                        }
                     else:
                         task = CareTask(
-                            task_type=tool_args["task_type"],
-                            name=tool_args["name"],
+                            task_type=proposed_type,
+                            name=proposed_name,
                             duration_minutes=int(tool_args["duration_minutes"]),
                             priority=int(tool_args["priority"]),
-                            frequency=tool_args["frequency"],
-                            preferred_time_windows=list(
-                                tool_args.get("preferred_time_windows", [])
-                            ),
+                            frequency=proposed_frequency,
+                            preferred_time_windows=preferred_windows,
                             is_time_flexible=bool(tool_args.get("is_time_flexible", True)),
                             notes=tool_args.get("notes", ""),
                             pet_name=pet.name,
@@ -326,7 +456,7 @@ def run_ai_advisor(
             if done:
                 break
 
-            response = chat.send_message(tool_response_parts)
+            response = _send_message_with_retry(chat, tool_response_parts)
 
         if not done:
             log.warning("Agent did not call finalize_plan before the turn cap was reached")
@@ -334,6 +464,16 @@ def run_ai_advisor(
     except genai_errors.ClientError as exc:
         log.exception("Gemini client error (code %s): %s", exc.code, exc)
         if exc.code == 429:
+            msg = str(exc).lower()
+            if "exceeded your current quota" in msg or "check your plan and billing" in msg:
+                return {
+                    "tasks": [],
+                    "explanation": "",
+                    "error": (
+                        "Gemini API quota is exhausted for this key/project. "
+                        "Enable billing or increase quota in Google AI Studio, then try again."
+                    ),
+                }
             return {
                 "tasks": [],
                 "explanation": "",

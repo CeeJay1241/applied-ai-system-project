@@ -1,6 +1,6 @@
 # PawPal+ (Module 2 Project)
 
-**PawPal+** is a Streamlit app that helps a pet owner plan and optimise daily care tasks for their pet, with an AI advisor powered by Claude.
+**PawPal+** is a Streamlit app that helps a pet owner plan and optimise daily care tasks for their pet, with an AI advisor powered by Gemini.
 
 ---
 
@@ -15,11 +15,11 @@ flowchart TD
 
     subgraph AI["AI Layer  —  ai_advisor.py"]
         direction TB
-        RAG["RAG Retriever\nretrieve_guidelines()\nscores KB entries vs pet profile\nreturns top 8 matches"]
+        RAG["RAG Retriever\nscore_and_retrieve_guidelines()\nscores KB entries vs pet profile\nreturns top 8 matches"]
         SYS["System Prompt\nbuilt with pet profile\n+ retrieved guidelines"]
-        AGENT["Gemini Agent\ngemini-2.0-flash\nfunction-calling loop ≤15 turns"]
-        T1["Tool: get_existing_tasks"]
-        T2["Tool: suggest_task ×N"]
+        AGENT["Gemini Agent\ngemini-2.5-flash (configurable)\nfunction-calling loop ≤10 turns\nexponential backoff + retry"]
+        T1["Tool: get_existing_tasks\nreturns names + full task details"]
+        T2["Tool: suggest_task ×N\nduplicate guard (name + intent)"]
         T3["Tool: finalize_plan"]
         RAG --> SYS --> AGENT
         AGENT --> T1 & T2 & T3
@@ -32,7 +32,7 @@ flowchart TD
     subgraph CORE["Core Scheduling Layer  —  pawpal_system.py"]
         SCH["Scheduler\ntwo-pass greedy algorithm\npriority-sorted placement"]
         CD["Conflict Detector\ndetect_conflicts()\npairwise overlap scan"]
-        PLAN["Daily Plan\nscheduled + unscheduled tasks"]
+        PLAN["Daily Plan\nscheduled + unscheduled tasks\nunscheduled reasons"]
         SCH --> CD --> PLAN
     end
 
@@ -49,12 +49,13 @@ flowchart TD
     end
 
     U -->|"pet profile + slots"| RAG
+    KB -->|"15 guidelines"| RAG
     U -->|"manual tasks (optional)"| SCH
     T2 -->|"CareTask objects\n+ explanation"| HR
     HR -->|"accepted tasks"| SCH
     PLAN --> UI
     UI --> MD
-    MD -->|"is_completed=True"| SCH
+    MD -->|"is_completed=True\nnext_due_date advances"| SCH
 
     PY -. validates .-> CORE
 
@@ -117,7 +118,7 @@ python3 -m pytest tests/test_pawpal.py -v
 
 | Feature | How it works |
 |---|---|
-| **AI Care Advisor** | Claude analyses the pet's profile, retrieves relevant care guidelines from the knowledge base (RAG), and uses an agentic tool-use loop to suggest a personalised task list with explanations. |
+| **AI Care Advisor** | Gemini analyses the pet's profile, retrieves relevant care guidelines from the knowledge base (RAG), and uses an agentic tool-use loop to suggest a personalised task list with explanations. |
 | **Two-pass greedy scheduling** | Tasks are sorted by priority score and placed into the owner's availability slots. Pass 1 respects each task's preferred time window; Pass 2 relaxes that constraint so high-priority tasks are never silently dropped. |
 | **Priority scoring** | `CareTask.get_priority_score()` computes `base_priority × 10`, adds `+20` for fixed-time tasks, and `+15` for medication tasks, ensuring critical care always schedules first. |
 | **Sorting by time** | `Scheduler.sort_by_time()` orders any task list chronologically by `scheduled_start_minute`; falls back to parsing the `HH:MM` time string when that field is `None`. |
@@ -140,11 +141,11 @@ python3 -m pytest tests/test_pawpal.py -v
 - **+2** age-group match (puppy / adult / senior)
 - **+4** medical condition keyword match (substring, case-insensitive)
 
-The top 8 matching entries are embedded directly into Claude's system prompt so its suggestions are grounded in the retrieved knowledge, not general assumptions.
+The top 8 matching entries are embedded directly into Gemini's system prompt so its suggestions are grounded in the retrieved knowledge, not general assumptions.
 
 ### Agentic workflow
 
-Claude is given three tools and runs in a loop until it finalises the plan:
+Gemini is given three tools and runs in a loop until it finalises the plan:
 
 | Tool | Purpose |
 |---|---|
@@ -152,7 +153,7 @@ Claude is given three tools and runs in a loop until it finalises the plan:
 | `suggest_task` | Add a task to the emerging care plan |
 | `finalize_plan` | End the loop with a natural-language explanation |
 
-The loop is capped at 15 turns. All API errors (auth failure, rate limit, unexpected stop reasons) are caught and returned as readable error messages — the app never crashes on an API failure.
+The loop is capped at 10 turns. Transient 429 rate limits are retried automatically with exponential backoff. All API errors (auth failure, quota exhaustion, server errors) are caught and returned as readable error messages — the app never crashes on an API failure.
 
 ### Logging
 
