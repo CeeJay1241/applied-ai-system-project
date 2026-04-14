@@ -6,67 +6,7 @@
 
 ## System Diagram
 
-```mermaid
-flowchart TD
-    subgraph INPUT["Input Layer"]
-        U([Owner fills in\npet profile + availability])
-        KB[(Care Knowledge Base\npet_care_kb.py\n15 tagged guidelines)]
-    end
-
-    subgraph AI["AI Layer  —  ai_advisor.py"]
-        direction TB
-        RAG["RAG Retriever\nscore_and_retrieve_guidelines()\nscores KB entries vs pet profile\nreturns top 8 matches"]
-        SYS["System Prompt\nbuilt with pet profile\n+ retrieved guidelines"]
-        AGENT["Gemini Agent\ngemini-2.5-flash (configurable)\nfunction-calling loop ≤10 turns\nexponential backoff + retry"]
-        T1["Tool: get_existing_tasks\nreturns names + full task details"]
-        T2["Tool: suggest_task ×N\nduplicate guard (name + intent)"]
-        T3["Tool: finalize_plan"]
-        RAG --> SYS --> AGENT
-        AGENT --> T1 & T2 & T3
-    end
-
-    subgraph HUMAN_AI["Human-in-the-Loop (AI output)"]
-        HR{"Owner reviews\nsuggested tasks\n+ AI explanation"}
-    end
-
-    subgraph CORE["Core Scheduling Layer  —  pawpal_system.py"]
-        SCH["Scheduler\ntwo-pass greedy algorithm\npriority-sorted placement"]
-        CD["Conflict Detector\ndetect_conflicts()\npairwise overlap scan"]
-        PLAN["Daily Plan\nscheduled + unscheduled tasks\nunscheduled reasons"]
-        SCH --> CD --> PLAN
-    end
-
-    subgraph OUTPUT["Output Layer  —  Streamlit UI"]
-        UI["Schedule display\ntime-sorted task list\nconflict warnings\nmark-done buttons"]
-    end
-
-    subgraph HUMAN_DONE["Human-in-the-Loop (execution)"]
-        MD{"Owner marks\ntasks complete\nnext_due_date updated"}
-    end
-
-    subgraph TEST["Testing Layer"]
-        PY["pytest — 22 tests\nRecurrence · Conflicts\nSorting · Scheduler\nPet · Owner · CareTask"]
-    end
-
-    U -->|"pet profile + slots"| RAG
-    KB -->|"15 guidelines"| RAG
-    U -->|"manual tasks (optional)"| SCH
-    T2 -->|"CareTask objects\n+ explanation"| HR
-    HR -->|"accepted tasks"| SCH
-    PLAN --> UI
-    UI --> MD
-    MD -->|"is_completed=True\nnext_due_date advances"| SCH
-
-    PY -. validates .-> CORE
-
-    style AI fill:#e8f4f8,stroke:#4a90d9
-    style INPUT fill:#f0f9f0,stroke:#5cb85c
-    style HUMAN_AI fill:#fff8e1,stroke:#f0ad4e
-    style HUMAN_DONE fill:#fff8e1,stroke:#f0ad4e
-    style CORE fill:#fdf2f8,stroke:#9b59b6
-    style OUTPUT fill:#f0f9f0,stroke:#5cb85c
-    style TEST fill:#fef9f0,stroke:#e67e22
-```
+![PawPal+ System Diagram](flowchart_diagram.png)
 
 ---
 
